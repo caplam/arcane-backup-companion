@@ -1,0 +1,32 @@
+# Arcane Backup Companion (ABC) — Configuration d'exemple
+# Copie ce fichier vers config.yaml et adapte à ton environnement.
+# config.yaml est ignoré par git (contient ta clé API).
+#
+# Génération automatique : python3 main.py --setup
+
+arcane_api_url: "http://arcane.example.com/api"   # URL de ton API Arcane
+arcane_api_key: "change-me"                        # Ta clé API Arcane
+backup_root: "/var/lib/arcane-backup-companion"   # Où stocker les snapshots
+notifications_enabled: false                       # Notifications Unraid (true si hôte Unraid)
+
+# Exclusions globales : chemins de bind mounts à ne jamais sauvegarder
+# (gros volumes re-créables, médias, téléchargements, etc.)
+global_exclusions:
+  - "/var/lib/data/media/"
+  - "/var/lib/data/downloads/"
+
+# Environnements découverts par --setup (exemple de structure)
+environments:
+  - id: "0"                 # L'hôte local (accès direct)
+    name: "hote_local"
+    access:
+      mode: direct
+      hostname: ""
+      port: 22
+      username: root
+      ssh_key_path: ""
+    global_retention:
+      daily: 7
+      weekly: 4
+      monthly: 3
+    projects: []

@@ -1,0 +1,23 @@
+# Configuration locale — jamais versionnée (contient les clés API)
+config.yaml
+
+# Backups de config
+*.bak
+*.bak-*
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Logs et données de run
+*.log
+pre_restore_*/
+backups/
+
+# Éditeurs / OS
+.vscode/
+.idea/
+.DS_Store
