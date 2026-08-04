@@ -297,19 +297,27 @@ def _derive_arcane_dir(config: Config) -> str:
     """
     Dérive le répertoire des données Arcane depuis la config.
 
-    Cherche dans l'environnement local (accès direct) un projet
-    contenant "arcane" avec des bind mounts, et prend le parent du
-    premier bind mount. Sinon, défaut conventionnel /var/lib/arcane.
+    Priorité :
+      1. Découverte API : mount -> /app/data du projet arcane (comme backup)
+      2. Bind mounts d'un projet "arcane" dans l'env local
+      3. Défaut conventionnel /var/lib/arcane
     """
     data_dir = ""
-    for env in config.environments:
-        if env.access.mode == AccessMode.DIRECT:
-            for proj in env.projects:
-                if "arcane" in proj.name.lower() and proj.bind_mounts:
-                    data_dir = os.path.dirname(proj.bind_mounts[0].path)
+    try:
+        from api import discover_host_paths
+        paths = discover_host_paths(config.arcane_api_url, config.arcane_api_key, "0")
+        data_dir = paths.get("data_dir", "")
+    except Exception:
+        data_dir = ""
+    if not data_dir:
+        for env in config.environments:
+            if env.access.mode == AccessMode.DIRECT:
+                for proj in env.projects:
+                    if "arcane" in proj.name.lower() and proj.bind_mounts:
+                        data_dir = os.path.dirname(proj.bind_mounts[0].path)
+                        break
+                if data_dir:
                     break
-            if data_dir:
-                break
     if not data_dir:
         data_dir = "/var/lib/arcane"
         logger.warning(f"  ⚠️  Répertoire Arcane non détecté, utilisation de {data_dir}")

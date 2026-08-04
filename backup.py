@@ -901,19 +901,24 @@ def backup_arcane(config: Config, snap_dir: str) -> None:
     logger.info("")
     logger.info("━━━ [local] arcane (hot backup SQLite) ━━━")
 
-    # Répertoire des données Arcane : dérivation depuis l'environnement
-    # local (accès direct), sinon chemin par défaut conventionnel.
+    # Répertoire des données Arcane : découverte depuis l'API (mount -> /app/data),
+    # puis bind mounts de la config, sinon défaut conventionnel.
     data_dir = ""
-    for env in config.environments:
-        if env.access.mode == AccessMode.DIRECT:
-            # Le projet arcane-agent expose son appdata via ses bind mounts
-            for proj in env.projects:
-                if "arcane" in proj.name.lower() and proj.bind_mounts:
-                    # Prendre le premier bind mount comme répertoire de données
-                    data_dir = os.path.dirname(proj.bind_mounts[0].path)
+    try:
+        from api import discover_host_paths
+        paths = discover_host_paths(config.arcane_api_url, config.arcane_api_key, "0")
+        data_dir = paths.get("data_dir", "")
+    except Exception:
+        data_dir = ""
+    if not data_dir:
+        for env in config.environments:
+            if env.access.mode == AccessMode.DIRECT:
+                for proj in env.projects:
+                    if "arcane" in proj.name.lower() and proj.bind_mounts:
+                        data_dir = os.path.dirname(proj.bind_mounts[0].path)
+                        break
+                if data_dir:
                     break
-            if data_dir:
-                break
     if not data_dir:
         data_dir = "/var/lib/arcane"  # défaut conventionnel
         logger.warning(f"  ⚠️  Répertoire Arcane non détecté, utilisation de {data_dir}")
