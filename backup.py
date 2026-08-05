@@ -1064,7 +1064,10 @@ def backup_arcane(config: Config, snap_dir: str) -> None:
         return
 
     # Backup via sqlite3 .backup (fiable, atomique)
-    tmp_backup = "/tmp/arcane-hotbackup.db"
+    # Fichier temporaire unique (anti symlink attack sur /tmp)
+    import tempfile
+    with tempfile.NamedTemporaryFile(prefix="arcane-hotbackup-", suffix=".db", delete=False) as _tf:
+        tmp_backup = _tf.name
     try:
         result = subprocess.run(
             ["sqlite3", db_path, f".backup {tmp_backup}"],
@@ -1072,17 +1075,23 @@ def backup_arcane(config: Config, snap_dir: str) -> None:
         )
         if result.returncode != 0:
             logger.error(f"  ❌ Échec du backup SQLite : {result.stderr}")
+            try: os.unlink(tmp_backup)
+            except OSError: pass
             return
     except (subprocess.TimeoutExpired, FileNotFoundError) as e:
         logger.error(f"  ❌ Échec du backup SQLite : {e}")
+        try: os.unlink(tmp_backup)
+        except OSError: pass
         return
 
     # Archiver la DB temporaire
     archive_path = os.path.join(snap_dir, "arcane-db.tar.gz")
+    tmp_dir = os.path.dirname(tmp_backup)
+    tmp_name = os.path.basename(tmp_backup)
     try:
         result = subprocess.run(
             ["tar", "czpf", archive_path, "--xattrs",
-             "-C", "/tmp", "arcane-hotbackup.db"],
+             "-C", tmp_dir, tmp_name],
             capture_output=True, text=True, timeout=30
         )
         if result.returncode != 0:

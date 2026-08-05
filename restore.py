@@ -348,9 +348,9 @@ def _restore_arcane_db(config: Config, snap_dir: str) -> bool:
     tmp_dir = tempfile.mkdtemp(prefix="arcane-restore-")
 
     try:
-        # Extraire l'archive
+        # Extraire l'archive (membres filtrés anti path traversal)
         with tarfile.open(archive_path, "r:gz") as tar:
-            tar.extractall(path=tmp_dir)
+            _extract_safe(tar, tmp_dir)
 
         db_src = os.path.join(tmp_dir, "arcane-hotbackup.db")
         if not os.path.isfile(db_src):
@@ -532,6 +532,52 @@ def restore_project(config: Config, env: Environment, project: Project,
         return True
 
 
+def _safe_tar_member(tarinfo: tarfile.TarInfo, dest_root: str) -> bool:
+    """Valide qu'un membre d'archive est sûr à extraire (anti path traversal).
+
+    Rejette :
+      - les chemins absolus (l'extraction irait ailleurs que dans dest_root)
+      - les segments '..' (sortie du dossier cible)
+      - les liens (hard/sym) dont la cible sortirait de dest_root
+
+    Retourne True si le membre est sûr, False sinon.
+    """
+    name = tarinfo.name
+    # Chemins absolus : rejet
+    if name.startswith("/"):
+        return False
+    # Segments '..' : rejet
+    for seg in name.split("/"):
+        if seg == "..":
+            return False
+    # Liens : vérifier que la cible ne sort pas de dest_root
+    if tarinfo.issym() or tarinfo.islnk():
+        link = tarinfo.linkname
+        # Résoudre le lien relatif au membre
+        target = os.path.normpath(os.path.join(os.path.dirname(name), link))
+        if target.startswith("..") or target.startswith("/"):
+            return False
+    return True
+
+
+def _extract_safe(tar: tarfile.TarFile, dest: str) -> bool:
+    """Extrait une archive tarfile en filtrant les membres dangereux.
+    Retourne True si tout est extrait, False si un membre a été rejeté."""
+    all_safe = True
+    for member in tar.getmembers():
+        if not _safe_tar_member(member, dest):
+            logger.warning(f"  ⚠️  Membre d'archive rejeté (chemin dangereux) : {member.name}")
+            all_safe = False
+            continue
+        try:
+            # set_attrs=True (défaut) : tarfile restaure permissions/ownership/mtime
+            tar.extract(member, path=dest)
+        except (tarfile.TarError, OSError) as e:
+            logger.warning(f"  ⚠️  Membre non extrait : {member.name} ({e})")
+            all_safe = False
+    return all_safe
+
+
 def _extract_to_target(snap_path: str, project: Project, target_dir: str) -> bool:
     """
     Extrait les données d'un snapshot vers un répertoire cible.
@@ -634,7 +680,8 @@ def _extract_to_target(snap_path: str, project: Project, target_dir: str) -> boo
             os.makedirs(vol_dest, exist_ok=True)
             try:
                 with tarfile.open(vol_archive, "r:gz") as tar:
-                    tar.extractall(path=vol_dest)
+                    if not _extract_safe(tar, vol_dest):
+                        logger.warning(f"  ⚠️  Certains membres du volume '{vol.name}' ont été rejetés (chemins dangereux)")
                 logger.info(f"  ✅ Volume '{vol.name}' extrait : {vol_dest}")
             except (tarfile.TarError, OSError) as e:
                 logger.error(f"  ❌ Échec extraction volume '{vol.name}' : {e}")
