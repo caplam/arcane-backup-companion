@@ -47,19 +47,19 @@ The interactive setup :
 ## Usage
 
 ```bash
-# Back up all projects (daily tier by default)
+# Back up all projects (all tiers by default)
 python3 main.py --run
 
-# Back up a single environment
+# Back up a single environment (all tiers)
 python3 main.py --run --env <name>
 
 # Back up several environments
 python3 main.py --run --env <h1> --env <h2>
 
 # Tiers
-python3 main.py --run --tier daily     # daily projects (default)
-python3 main.py --run --tier weekly    # weekly projects
-python3 main.py --run --tier all       # every project
+python3 main.py --run --tier all       # every project (default)
+python3 main.py --run --tier daily     # daily projects only
+python3 main.py --run --tier weekly    # weekly projects only
 
 # Estimate size without backing up
 python3 main.py --run --dry-run
@@ -67,6 +67,51 @@ python3 main.py --run --dry-run
 # Show the current configuration
 python3 main.py --status
 ```
+
+## Backup tiers and scheduling
+
+There are **three distinct concepts** that interact. Understanding them avoids surprises when setting up cron jobs.
+
+### 1. Project `schedule` (configured per project)
+
+Each project has a retention schedule set during `--setup` :
+
+```yaml
+retention:
+  schedule: daily   # daily | weekly
+  daily: 7          # keep 7 daily snapshots
+  weekly: 4         # keep 4 weekly snapshots
+  monthly: 6        # keep 6 monthly snapshots
+```
+
+The `schedule` field only controls **which tier the project belongs to** for filtering — it does **not** schedule anything by itself. ABC never runs by itself : a cron job (or User Script) must launch it.
+
+### 2. `--tier` (backup filter per run)
+
+The `--tier` flag filters which projects are backed up during a run :
+
+| Tier | Projects backed up |
+|---|---|
+| `all` (**default**) | Every project, regardless of `schedule` |
+| `daily` | Only projects with `schedule: daily` |
+| `weekly` | Only projects with `schedule: weekly` |
+
+⚠️ **Danger** : if you run a daily cron with `--tier daily`, projects with `schedule: weekly` are **never** backed up. With the default tier `all`, every project is backed up on every run.
+
+### 3. GFS retention (prune, runs after each project)
+
+GFS retention **never decides when** to back up — it only **cleans up after each run**, keeping at most `daily` + `weekly` + `monthly` snapshots per project and deleting the surplus.
+
+**Consequence** : snapshot frequency = cron frequency. If a project is backed up daily but has `schedule: weekly`, a snapshot is created every day, then the GFS prune deletes all but one snapshot per week (and one per month). This is functionally correct but slightly wasteful (the daily backups of a weekly project are discarded).
+
+### Recommended cron setups
+
+| Setup | Pros | Cons |
+|---|---|---|
+| **1 daily cron per env, no `--tier` (default `all`)** | Simple, everything is covered, GFS regulates retention | Weekly projects are backed up daily then pruned (wasteful) |
+| **2 crons per env** : daily `--tier daily` + weekly `--tier weekly` | Economical, weekly projects only run when intended | More scripts to maintain |
+
+For a homelab, **one daily cron per environment** (default `all`) is usually the best trade-off.
 
 ## Restore
 

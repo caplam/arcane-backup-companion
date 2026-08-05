@@ -47,19 +47,19 @@ Le setup interactif :
 ## Utilisation
 
 ```bash
-# Sauvegarder tous les projets (tier daily par défaut)
+# Sauvegarder tous les projets (tous les tiers par défaut)
 python3 main.py --run
 
-# Sauvegarder un environnement spécifique
+# Sauvegarder un environnement spécifique (tous les tiers)
 python3 main.py --run --env <nom>
 
 # Sauvegarder plusieurs environnements
 python3 main.py --run --env <h1> --env <h2>
 
 # Tiers
-python3 main.py --run --tier daily     # projets quotidiens (défaut)
-python3 main.py --run --tier weekly    # projets hebdomadaires
-python3 main.py --run --tier all       # tous les projets
+python3 main.py --run --tier all       # tous les projets (défaut)
+python3 main.py --run --tier daily     # projets quotidiens uniquement
+python3 main.py --run --tier weekly    # projets hebdomadaires uniquement
 
 # Estimation sans sauvegarder
 python3 main.py --run --dry-run
@@ -67,6 +67,51 @@ python3 main.py --run --dry-run
 # Voir la configuration actuelle
 python3 main.py --status
 ```
+
+## Tiers de sauvegarde et planification
+
+Il y a **trois concepts distincts** qui interagissent. Les comprendre évite les surprises lors de la configuration des cron.
+
+### 1. `schedule` du projet (configuré par projet)
+
+Chaque projet a une politique de rétention définie pendant `--setup` :
+
+```yaml
+retention:
+  schedule: daily   # daily | weekly
+  daily: 7          # garde 7 snapshots quotidiens
+  weekly: 4         # garde 4 snapshots hebdomadaires
+  monthly: 6        # garde 6 snapshots mensuels
+```
+
+Le champ `schedule` contrôle uniquement **à quel tier le projet appartient** pour le filtrage — il ne planifie **rien** par lui-même. ABC ne se lance jamais tout seul : un cron (ou User Script) doit le déclencher.
+
+### 2. `--tier` (filtre de sauvegarde par run)
+
+Le flag `--tier` filtre quels projets sont sauvegardés pendant un run :
+
+| Tier | Projets sauvegardés |
+|---|---|
+| `all` (**défaut**) | Tous les projets, quel que soit leur `schedule` |
+| `daily` | Uniquement les projets avec `schedule: daily` |
+| `weekly` | Uniquement les projets avec `schedule: weekly` |
+
+⚠️ **Danger** : si tu lances un cron quotidien avec `--tier daily`, les projets avec `schedule: weekly` ne seront **jamais** sauvegardés. Avec le tier par défaut `all`, tous les projets sont sauvegardés à chaque run.
+
+### 3. Rétention GFS (prune, exécutée après chaque projet)
+
+La rétention GFS **ne décide jamais quand** sauvegarder — elle **nettoie après chaque run**, en gardant au maximum `daily` + `weekly` + `monthly` snapshots par projet et en supprimant le surplus.
+
+**Conséquence** : la fréquence des snapshots = la fréquence du cron. Si un projet est sauvegardé quotidiennement mais a `schedule: weekly`, un snapshot est créé chaque jour, puis le prune GFS supprime tout sauf un snapshot par semaine (et un par mois). C'est fonctionnellement correct mais légèrement gaspilleur (les sauvegardes quotidiennes d'un projet weekly sont jetées).
+
+### Configurations de cron recommandées
+
+| Configuration | Avantages | Inconvénients |
+|---|---|---|
+| **1 cron quotidien par env, sans `--tier` (défaut `all`)** | Simple, tout est couvert, le GFS régule la rétention | Les projets weekly sont sauvegardés chaque jour puis purgés (gaspillage) |
+| **2 crons par env** : daily `--tier daily` + weekly `--tier weekly` | Économe, les projets weekly ne tournent que quand prévu | Plus de scripts à maintenir |
+
+Pour un homelab, **un cron quotidien par environnement** (défaut `all`) est généralement le meilleur compromis.
 
 ## Restauration
 
