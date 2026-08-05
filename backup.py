@@ -334,6 +334,13 @@ def _backup_bind_mount_local(bind_mounts: list[BindMount], snap_dir: str,
             logger.warning(f"    ⚠️  {bm.path} — introuvable, ignoré")
             continue
 
+        # Valider le chemin (entrée non fiable de l'API) — cohérent avec la version distante
+        try:
+            _sanitize_path(bm.path, "bind mount")
+        except ValueError as e:
+            logger.warning(f"    ⚠️  {e} — bind mount ignoré")
+            continue
+
         # Nom du fichier : on prend le dernier segment du chemin
         dir_name = os.path.basename(bm.path.rstrip("/"))
         archive_name = f"data_{dir_name}.tar"
@@ -427,8 +434,16 @@ def _backup_bind_mount_remote(config: Config, env: Environment,
 
         logger.info(f"    📦 Archivage distant de {bm.path} → {archive_name}")
 
+        # Valider le chemin AVANT toute commande shell (entrée non fiable de l'API)
+        try:
+            _sanitize_path(bm.path, "bind mount")
+        except ValueError as e:
+            logger.warning(f"    ⚠️  {e} — bind mount ignoré")
+            continue
+
         # Vérifier que le chemin existe sur le LXC
-        check_cmd = f"{ssh_base} {ssh_target} 'test -e {bm.path} && echo OK || echo NOT_FOUND'"
+        q_path = _ssh_quote(bm.path)
+        check_cmd = f"{ssh_base} {ssh_target} 'test -e {q_path} && echo OK || echo NOT_FOUND'"
         try:
             check = subprocess.run(
                 check_cmd, shell=True, capture_output=True, text=True, timeout=15
@@ -443,10 +458,12 @@ def _backup_bind_mount_remote(config: Config, env: Environment,
         # Tar à distance → fichier local
         parent_dir = os.path.dirname(bm.path.rstrip("/"))
         base_name = os.path.basename(bm.path.rstrip("/"))
+        q_parent = _ssh_quote(parent_dir)
+        q_base = _ssh_quote(base_name)
         tar_cmd = (
             f"{ssh_base} {ssh_target} "
-            f"'tar cpf - --xattrs --sparse -C {parent_dir} "
-            f"{base_name}' "
+            f"'tar cpf - --xattrs --sparse -C {q_parent} "
+            f"{q_base}' "
             f"> {archive_path}"
         )
 
@@ -665,12 +682,97 @@ def _estimate_backup_size(config: Config, tier: str = "all") -> None:
 
 
 def _ssh_cmd(env: Environment, command: str) -> str:
-    """Construit une commande SSH pour un environnement distant."""
+    """Construit une commande SSH pour un environnement distant.
+
+    Les champs de l'environnement (hostname, username, port, clé) sont
+    validés avant usage — défense en profondeur en plus de _safe_ssh_env.
+    """
+    try:
+        _safe_ssh_env(env)
+    except ValueError as e:
+        raise ValueError(f"SSH refusé : {e}")
     access = env.access
     ssh = f"ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 -p {access.port}"
     if access.ssh_key_path:
         ssh += f" -i {access.ssh_key_path}"
     return f"{ssh} {access.username}@{access.hostname} '{command}'"
+
+
+# ─── Sanitization des entrées (sécurité) ───────────────────────────────────────
+
+# Les identifiants et chemins utilisés dans les commandes shell (SSH, tar)
+# proviennent de l'API Arcane — des entrées non fiables. On les valide par
+# whitelist stricte : tout caractère hors de ces ensembles est rejeté, ce qui
+# empêche l'injection de commandes via un projet ou un bind mount malveillant.
+
+# Nom de projet / service : lettres, chiffres, point, tiret, underscore
+# (convention Docker Compose). Pas de slash, pas d'espace, pas de métacaractère.
+_RE_VALID_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+# Chemin de filesystem : lettres, chiffres, slash, point, tiret, underscore,
+# espace (U+0020) et '=' (présents dans de vrais chemins, ex: "Application Support", immich).
+# Les métacaractères shell ($ ; ` | & < > ( ) { } ' " \ nouvelle-ligne, tab, CR) sont rejetés.
+_RE_VALID_PATH = re.compile(r"^[A-Za-z0-9/._\-\x20=]+$")
+
+# Hostname / utilisateur SSH : lettres, chiffres, point, tiret, underscore.
+_RE_VALID_HOST = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+def _sanitize_name(name: str, what: str = "nom") -> str:
+    """Valide un identifiant (projet, service). Retourne le nom si sûr,
+    sinon lève ValueError — l'appelant doit ignorer/skipper l'élément."""
+    if not name or not _RE_VALID_NAME.match(name):
+        raise ValueError(f"{what} invalide (caractères non autorisés) : {name!r}")
+    return name
+
+
+def _sanitize_path(path: str, what: str = "chemin") -> str:
+    """Valide un chemin de filesystem utilisé dans une commande shell.
+    Retourne le chemin si sûr, sinon lève ValueError.
+
+    Rejette aussi les segments '..' (path traversal) : un bind mount
+    légitime ne contient jamais '..'.
+    """
+    if not path or not _RE_VALID_PATH.match(path):
+        raise ValueError(f"{what} invalide (caractères non autorisés) : {path!r}")
+    # Path traversal : rejeter tout segment '..'
+    for seg in path.split("/"):
+        if seg == "..":
+            raise ValueError(f"{what} invalide (segment '..') : {path!r}")
+    return path
+
+
+def _sanitize_host(host: str, what: str = "hôte") -> str:
+    """Valide un hostname ou un utilisateur SSH."""
+    if not host or not _RE_VALID_HOST.match(host):
+        raise ValueError(f"{what} invalide (caractères non autorisés) : {host!r}")
+    return host
+
+
+def _safe_ssh_env(env: Environment) -> None:
+    """Valide les paramètres SSH d'un environnement AVANT toute commande.
+    Lève ValueError si un champ est dangereux — le run est annulé pour cet env."""
+    _sanitize_host(env.access.hostname, "hostname SSH")
+    _sanitize_host(env.access.username, "utilisateur SSH")
+    port = int(env.access.port)
+    if not (1 <= port <= 65535):
+        raise ValueError(f"port SSH invalide : {env.access.port}")
+    if env.access.ssh_key_path:
+        _sanitize_path(env.access.ssh_key_path, "chemin clé SSH")
+
+
+def _ssh_quote(value: str) -> str:
+    """Quote une valeur pour être interpolée dans une commande SSH.
+
+    La commande distante est construite comme  ssh host 'cmd {value}'  —
+    le shell LOCAL interprète les quotes simples, puis le shell DISTANT
+    reçoit la commande. Pour que la valeur survive intacte aux DEUX
+    couches, on remplace chaque ' par '\'' (la séquence standard qui
+    ferme, quote, et rouvre la chaîne simple).
+
+    À utiliser sur les chemins/noms validés avant interpolation.
+    """
+    return value.replace("'", "'\\''")
 
 
 # ─── Backup d'un bind mount (local) ─────────────────────────────────────────────
@@ -693,7 +795,13 @@ def _resolve_compose_dir(config: Config, env: Environment, project: Project) -> 
     compose de l'agent (mount -> /app/data/projects).
     """
     if project.compose_dir:
-        return project.compose_dir
+        # compose_dir vient de la config — valider avant usage dans les commandes SSH
+        try:
+            return _sanitize_path(project.compose_dir, "compose_dir")
+        except ValueError as e:
+            logger.warning(f"  ⚠️  {e} — utilisation du fallback")
+            project.compose_dir = ""  # forcer la découverte
+    # fallthrough vers la découverte
 
     if env.id not in _HOST_PATHS_CACHE:
         _HOST_PATHS_CACHE[env.id] = discover_host_paths(
@@ -702,12 +810,23 @@ def _resolve_compose_dir(config: Config, env: Environment, project: Project) -> 
 
     projects_dir = _HOST_PATHS_CACHE[env.id].get("projects_dir")
     if projects_dir:
-        return f"{projects_dir}/{project.name}"
+        # projects_dir vient de l'API (non fiable) — valider le chemin complet
+        candidate = f"{projects_dir}/{project.name}"
+        try:
+            return _sanitize_path(candidate, "répertoire projet découvert")
+        except ValueError as e:
+            logger.warning(f"  ⚠️  {e} — utilisation du fallback")
 
     logger.warning(
         f"  ⚠️  Répertoire projet non détecté pour {env.name}/{project.name} — "
         f"utilisation du fallback relatif ./stacks/{project.name}"
     )
+    # Valider le nom dans la fonction elle-même (défense en profondeur :
+    # ne pas dépendre d'un appelant qui aurait oublié _sanitize_name)
+    try:
+        _sanitize_name(project.name, "nom de projet (fallback)")
+    except ValueError as e:
+        raise ValueError(f"{e}")
     return f"./stacks/{project.name}"
 
 
@@ -729,6 +848,17 @@ def backup_project(config: Config, env: Environment, project: Project,
     """
     env_name = env.name
     proj_name = project.name
+
+    # Sanitization : les noms viennent de l'API Arcane (entrées non fiables).
+    # Un nom invalide pourrait injecter des commandes dans les appels SSH.
+    try:
+        _sanitize_name(proj_name, "nom de projet")
+        _sanitize_name(project.compose_file_name, "nom du fichier compose")
+        _sanitize_name(env_name, "nom d'environnement")
+    except ValueError as e:
+        logger.error(f"  ❌ {e} — projet ignoré")
+        report.error(env_name, proj_name, f"Sanitization: {e}")
+        return
 
     logger.info(f"")
     logger.info(f"━━━ [{env_name}] {proj_name} ━━━")
@@ -774,7 +904,9 @@ def backup_project(config: Config, env: Environment, project: Project,
     elif is_agent and was_running:
         # Arrêt via SSH (agent Arcane, pas d'API disponible)
         compose_path = _resolve_compose_dir(config, env, project)
-        ssh_cmd = _ssh_cmd(env, f"cd {compose_path} && docker compose -f {project.compose_file_name} down")
+        q_compose = _ssh_quote(compose_path)
+        q_file = _ssh_quote(project.compose_file_name)
+        ssh_cmd = _ssh_cmd(env, f"cd {q_compose} && docker compose -f {q_file} down")
         try:
             logger.info(f"  🔌 Arrêt via SSH: {compose_path}/{project.compose_file_name}")
             result = subprocess.run(ssh_cmd, shell=True, capture_output=True, text=True, timeout=30)
@@ -803,7 +935,9 @@ def backup_project(config: Config, env: Environment, project: Project,
     if is_agent and was_running:
         # Démarrage via SSH (agent Arcane)
         compose_path = _resolve_compose_dir(config, env, project)
-        ssh_cmd = _ssh_cmd(env, f"cd {compose_path} && docker compose -f {project.compose_file_name} up -d")
+        q_compose = _ssh_quote(compose_path)
+        q_file = _ssh_quote(project.compose_file_name)
+        ssh_cmd = _ssh_cmd(env, f"cd {q_compose} && docker compose -f {q_file} up -d")
         logger.info(f"  ▶️  Démarrage agent via SSH: {compose_path}")
         try:
             result = subprocess.run(ssh_cmd, shell=True, capture_output=True, text=True, timeout=60)
@@ -1021,6 +1155,15 @@ def run_backup(config: Config, tier: str = "all", dry_run: bool = False) -> None
         if env.access.mode == AccessMode.SSH:
             logger.info(f"")
             logger.info(f"═══ 🌐 {env.name} (SSH: {env.access.hostname}) ═══")
+            # Sanitization : valider les paramètres SSH avant toute commande
+            try:
+                _safe_ssh_env(env)
+            except ValueError as e:
+                logger.error(f"  ❌ {e} — environnement ignoré")
+                for p in env.projects:
+                    if not p.skip:
+                        report.error(env.name, p.name, f"Sanitization: {e}")
+                continue
             # Vérifier que le LXC est joignable
             ssh_base = f"ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -p {env.access.port}"
             if env.access.ssh_key_path:
