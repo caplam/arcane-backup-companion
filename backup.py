@@ -170,6 +170,26 @@ def _is_excluded(path: str, exclusions: list[str]) -> bool:
     return False
 
 
+# Racines système à ne JAMAIS sauvegarder comme bind mount.
+# Un agent de monitoring (ex: elastic-agent) peut monter / en lecture seule
+# pour scanner le système — ce n'est jamais une donnée à archiver.
+# C'est la défense en profondeur en complément du filtre du setup (SYSTEM_PATHS).
+_SYSTEM_BIND_MOUNTS = [
+    "/", "/proc", "/sys", "/dev", "/tmp",
+    "/var/run/docker.sock", "/run/docker.sock",
+    "/etc/localtime", "/etc/timezone", "/etc/hostname",
+    "/etc/hosts", "/etc/resolv.conf",
+]
+
+
+def _is_system_bind_mount(path: str) -> bool:
+    """Vrai si le chemin est une racine système à ne jamais sauvegarder."""
+    for sp in _SYSTEM_BIND_MOUNTS:
+        if path == sp or path.startswith(sp + "/"):
+            return True
+    return False
+
+
 # ─── Utilitaires ───────────────────────────────────────────────────────────────
 
 def _timestamp() -> str:
@@ -330,6 +350,11 @@ def _backup_bind_mount_local(bind_mounts: list[BindMount], snap_dir: str,
             logger.info(f"    ⏭️  {bm.path} — exclu par la politique globale (media/downloads/iso)")
             continue
 
+        # Racines système : ne jamais sauvegarder /, /proc, /sys, ...
+        if _is_system_bind_mount(bm.path):
+            logger.info(f"    ⏭️  {bm.path} — racine système, jamais sauvegardée")
+            continue
+
         if not (os.path.isfile(bm.path) or os.path.isdir(bm.path)):
             logger.warning(f"    ⚠️  {bm.path} — introuvable, ignoré")
             continue
@@ -426,6 +451,11 @@ def _backup_bind_mount_remote(config: Config, env: Environment,
         # Vérifier les exclusions globales
         if _is_excluded(bm.path, config.global_exclusions):
             logger.info(f"    ⏭️  {bm.path} — exclu par la politique globale (media/downloads/iso)")
+            continue
+
+        # Racines système : ne jamais sauvegarder /, /proc, /sys, ...
+        if _is_system_bind_mount(bm.path):
+            logger.info(f"    ⏭️  {bm.path} — racine système, jamais sauvegardée")
             continue
 
         dir_name = os.path.basename(bm.path.rstrip("/"))
