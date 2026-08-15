@@ -198,8 +198,14 @@ def _timestamp() -> str:
 
 
 def _env_backup_root(config: Config, env_name: str) -> str:
-    """Retourne le répertoire de backup pour un environnement."""
-    return os.path.join(config.backup_root, env_name)
+    """Retourne le répertoire de backup pour un environnement.
+
+    Normalise la casse en minuscules pour rester cohérent avec
+    ``_setup_logging`` (qui applique ``.lower()`` sur les noms d'env).
+    Sans cela, les données vont dans ``Dionysos/`` et les logs dans
+    ``dionysos/`` — deux répertoires distincts pour le même env.
+    """
+    return os.path.join(config.backup_root, env_name.lower())
 
 
 def _project_backup_root(config: Config, env_name: str, project_name: str) -> str:
@@ -1250,6 +1256,10 @@ def run_backup(config: Config, tier: str = "all", dry_run: bool = False) -> None
             try:
                 if project.name.lower() == "arcane":
                     backup_arcane(config, snap_dir)
+                    # Prune GFS pour arcane — sinon ses snapshots s'accumulent
+                    # indéfiniment (backup_arcane ne fait pas son propre prune).
+                    project_dir = _project_backup_root(config, env.name, project.name)
+                    run_prune(project_dir, project.retention.to_policy())
                     report.ok(env.name, project.name)
                 else:
                     backup_project(config, env, project, snap_dir, report, run_id)
