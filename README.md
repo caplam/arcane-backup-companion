@@ -46,13 +46,13 @@ Use `./venv/bin/python` for all commands (not the system `python3`).
 
 ### Unraid specifics (production)
 
-On Unraid the project is deployed on a persistent share (e.g.
-`/mnt/user/hermes-files/projects/arkbackup`) and run via **User Scripts**.
+On Unraid the project should be deployed on a **persistent share** (e.g. on the
+array/cache pool, not on a USB flash device) and run via **User Scripts**.
 ⚠️ **Do NOT** install dependencies into the system Python (`pip3 install pyyaml`)
-— `/usr/` is tmpfs, everything is wiped on reboot. Use a venv on the share:
+— `/usr/` lives in tmpfs, everything is wiped on reboot. Use a venv on the persistent share:
 
 ```bash
-cd /mnt/user/hermes-files/projects/arkbackup
+cd <persistent-share>/arcane-backup-companion
 python3 -m venv venv
 ./venv/bin/pip install --upgrade pip
 ./venv/bin/pip install -r requirements.txt
@@ -61,7 +61,7 @@ python3 -m venv venv
 **Unraid User Scripts** (one per environment) — the command MUST point to the venv:
 
 ```bash
-/mnt/user/hermes-files/projects/arkbackup/venv/bin/python /mnt/user/hermes-files/projects/arkbackup/main.py --run
+<persistent-share>/arcane-backup-companion/venv/bin/python <persistent-share>/arcane-backup-companion/main.py --run
 ```
 
 > **Symptom if using `python3 main.py --run`**: after a reboot,
