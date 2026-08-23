@@ -25,11 +25,49 @@ Arcane Backup Companion (ABC) discovers environments and projects automatically 
 
 ## Installation
 
+**Recommended: virtual environment (venv)** — isolates dependencies, survives
+reboots (essential on Unraid where the system Python lives in tmpfs and loses
+installed packages on every reboot), and keeps the system Python clean.
+
 ```bash
 git clone <repo-url> arcane-backup-companion
 cd arcane-backup-companion
-pip install -r requirements.txt
+
+# Create a venv inside the project + install dependencies
+python3 -m venv venv
+./venv/bin/pip install --upgrade pip
+./venv/bin/pip install -r requirements.txt
+
+# Verify
+./venv/bin/python -c "import yaml; print('yaml OK', yaml.__version__)"
 ```
+
+Use `./venv/bin/python` for all commands (not the system `python3`).
+
+### Unraid specifics (production)
+
+On Unraid the project is deployed on a persistent share (e.g.
+`/mnt/user/hermes-files/projects/arkbackup`) and run via **User Scripts**.
+⚠️ **Do NOT** install dependencies into the system Python (`pip3 install pyyaml`)
+— `/usr/` is tmpfs, everything is wiped on reboot. Use a venv on the share:
+
+```bash
+cd /mnt/user/hermes-files/projects/arkbackup
+python3 -m venv venv
+./venv/bin/pip install --upgrade pip
+./venv/bin/pip install -r requirements.txt
+```
+
+**Unraid User Scripts** (one per environment) — the command MUST point to the venv:
+
+```bash
+/mnt/user/hermes-files/projects/arkbackup/venv/bin/python /mnt/user/hermes-files/projects/arkbackup/main.py --run
+```
+
+> **Symptom if using `python3 main.py --run`**: after a reboot,
+> `ModuleNotFoundError: No module named 'yaml'` (pyyaml wiped from tmpfs).
+> Fix: point the user script to `venv/bin/python` (see above).
+
 
 ## Configuration
 
