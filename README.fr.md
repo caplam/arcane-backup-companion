@@ -72,7 +72,7 @@ python3 -m venv venv
 ## Configuration
 
 ```bash
-python3 main.py --setup
+./venv/bin/python main.py --setup
 ```
 
 Le setup interactif :
@@ -84,26 +84,29 @@ Le setup interactif :
 
 ## Utilisation
 
+> Toutes les commandes utilisent `./venv/bin/python` (voir Installation).
+> Remplacer par `python3` uniquement si tu as choisi une autre méthode d'exécution.
+
 ```bash
 # Sauvegarder tous les projets (tous les tiers par défaut)
-python3 main.py --run
+./venv/bin/python main.py --run
 
 # Sauvegarder un environnement spécifique (tous les tiers)
-python3 main.py --run --env <nom>
+./venv/bin/python main.py --run --env <nom>
 
 # Sauvegarder plusieurs environnements
-python3 main.py --run --env <h1> --env <h2>
+./venv/bin/python main.py --run --env <h1> --env <h2>
 
 # Tiers
-python3 main.py --run --tier all       # tous les projets (défaut)
-python3 main.py --run --tier daily     # projets quotidiens uniquement
-python3 main.py --run --tier weekly    # projets hebdomadaires uniquement
+./venv/bin/python main.py --run --tier all       # tous les projets (défaut)
+./venv/bin/python main.py --run --tier daily     # projets quotidiens uniquement
+./venv/bin/python main.py --run --tier weekly    # projets hebdomadaires uniquement
 
 # Estimation sans sauvegarder
-python3 main.py --run --dry-run
+./venv/bin/python main.py --run --dry-run
 
 # Voir la configuration actuelle
-python3 main.py --status
+./venv/bin/python main.py --status
 ```
 
 ## Tiers de sauvegarde et planification
@@ -155,16 +158,16 @@ Pour un homelab, **un cron quotidien par environnement** (défaut `all`) est gé
 
 ```bash
 # Menu interactif
-python3 main.py --restore
+./venv/bin/python main.py --restore
 
 # Restaurer le snapshot le plus récent d'un projet
-python3 main.py --restore <env>/<projet>
+./venv/bin/python main.py --restore <env>/<projet>
 
 # Restaurer un snapshot spécifique
-python3 main.py --restore <env>/<projet>/<snapshot>
+./venv/bin/python main.py --restore <env>/<projet>/<snapshot>
 
 # Extraction vers un répertoire (sans toucher au projet — migration)
-python3 main.py --restore <env>/<projet> --to /tmp/test
+./venv/bin/python main.py --restore <env>/<projet> --to /tmp/test
 ```
 
 La restauration sur place :
