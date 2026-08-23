@@ -32,12 +32,23 @@ class ArcaneError(Exception):
 
 def _curl(method: str, url: str, api_key: str, data: Optional[str] = None,
           output_file: Optional[str] = None,
-          raw_response: bool = False) -> Optional[dict]:
+          raw_response: bool = False,
+          timeout: int = 30,
+          progress_timeout: bool = False) -> Optional[dict]:
     """
     Appel curl bas niveau.
 
     Si raw_response=True, retourne le texte brut sans parser le JSON.
     Utile pour les endpoints start/stop qui ne retournent pas de JSON.
+
+    timeout: garde-fou absolu en secondes (défaut 30). Un appel bloqué sans
+    aucune réponse lève une ArcaneError après ce délai.
+
+    progress_timeout: si True, le contrôle du temps repose sur la PROGRESSION
+    du transfert (curl --speed-limit/--speed-time) plutôt que sur une durée
+    fixe. Le transfert s'arrête seulement s'il est en panne (vitesse < 1 Ko/s
+    pendant 30s) — un gros volume qui transfère continue tant que nécessaire.
+    À utiliser pour les téléchargements de backups de volume Docker.
     """
     cmd = ["curl", "-skf", "-X", method,
            "-H", f"x-api-key: {api_key}"]
@@ -49,10 +60,14 @@ def _curl(method: str, url: str, api_key: str, data: Optional[str] = None,
     if output_file:
         cmd.extend(["-o", output_file])
 
+    if progress_timeout:
+        # Abandonne seulement si le transfert est à l'arrêt, pas sur une durée.
+        cmd.extend(["--speed-limit", "1024", "--speed-time", "30"])
+
     cmd.append(url)
 
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         raise ArcaneError(f"Timeout sur {url}")
 
@@ -160,7 +175,11 @@ def create_volume_backup(api_url: str, api_key: str, env_id: str, volume_name: s
 
     Retourne l'ID du backup à télécharger, ou None si échec.
     """
-    resp = _curl("POST", f"{api_url}/environments/{env_id}/volumes/{volume_name}/backups", api_key)
+    # La création d'un backup déclenche l'archivage du volume côté agent
+    # Arcane (opération synchrone, peut dépasser 30s pour les gros volumes).
+    # Timeout long en garde-fou ; pas de notion de progression ici.
+    resp = _curl("POST", f"{api_url}/environments/{env_id}/volumes/{volume_name}/backups",
+                 api_key, timeout=300)
     return resp.get("data", {}).get("id")
 
 
@@ -168,8 +187,12 @@ def download_volume_backup(api_url: str, api_key: str, env_id: str,
                            backup_id: str, dest_path: str) -> bool:
     """Télécharge un backup de volume vers un fichier local."""
     try:
+        # Le téléchargement transfère l'archive complète du volume (peut être
+        # plusieurs centaines de Mo voire Go). On contrôle par la PROGRESSION
+        # (curl --speed-limit/--speed-time) : tant que ça transfère, on attend.
+        # Le timeout=3600 n'est qu'un garde-fou absolu contre un serveur muet.
         _curl("GET", f"{api_url}/environments/{env_id}/volumes/backups/{backup_id}/download",
-              api_key, output_file=dest_path)
+              api_key, output_file=dest_path, timeout=3600, progress_timeout=True)
         return True
     except ArcaneError:
         return False

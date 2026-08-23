@@ -177,6 +177,7 @@ def _is_excluded(path: str, exclusions: list[str]) -> bool:
 _SYSTEM_BIND_MOUNTS = [
     "/", "/proc", "/sys", "/dev", "/tmp",
     "/var/run/docker.sock", "/run/docker.sock",
+    "/var/run", "/run",
     "/etc/localtime", "/etc/timezone", "/etc/hostname",
     "/etc/hosts", "/etc/resolv.conf",
 ]

@@ -68,6 +68,7 @@ def _discover_bind_mounts_from_compose(compose_content: str, env_content: str = 
         "/etc/hosts", "/etc/resolv.conf",
         "/proc", "/sys", "/sys/",
         "/var/run/docker.sock", "/run/docker.sock",
+        "/var/run", "/run",
         "/dev", "/dev/",
         "/tmp", "/tmp/",
         # Média et gros volumes (re-créables, trop volumineux) — exemples,
@@ -321,9 +322,14 @@ def _configure_single_project(config: Config, env: Environment,
         if isinstance(parsed, dict):
             vol_decls = parsed.get("volumes", {})
             if isinstance(vol_decls, dict):
-                for vol_name in vol_decls:
-                    keep = _prompt_yes_no(f"    Sauvegarder le volume Docker '{vol_name}' ?", True)
-                    docker_volumes.append(DockerVolume(name=vol_name, selected=keep))
+                for vol_name, vol_decl in vol_decls.items():
+                    # Docker Compose préfixe les volumes avec le nom du projet,
+                    # sauf si un 'name:' explicite est déclaré. Sans ce préfixe,
+                    # l'API Arcane renvoie un backup vide (volume fantôme, ~0.1 Ko).
+                    resolved = vol_decl['name'] if isinstance(vol_decl, dict) and vol_decl.get('name') \
+                               else f"{p_name}_{vol_name}"
+                    keep = _prompt_yes_no(f"    Sauvegarder le volume Docker '{resolved}' ?", True)
+                    docker_volumes.append(DockerVolume(name=resolved, selected=keep))
     except yaml.YAMLError:
         pass
 
@@ -634,9 +640,14 @@ def _setup_projects(config: Config, env: Environment) -> None:
                 # Volumes nommés déclarés en top-level
                 vol_decls = parsed.get("volumes", {})
                 if isinstance(vol_decls, dict):
-                    for vol_name in vol_decls:
-                        keep = _prompt_yes_no(f"      Sauvegarder le volume Docker '{vol_name}' ?", True)
-                        docker_volumes.append(DockerVolume(name=vol_name, selected=keep))
+                    for vol_name, vol_decl in vol_decls.items():
+                        # Docker Compose préfixe les volumes avec le nom du projet,
+                        # sauf si un 'name:' explicite est déclaré. Sans ce préfixe,
+                        # l'API Arcane renvoie un backup vide (volume fantôme, ~0.1 Ko).
+                        resolved = vol_decl['name'] if isinstance(vol_decl, dict) and vol_decl.get('name') \
+                                   else f"{p_name}_{vol_name}"
+                        keep = _prompt_yes_no(f"      Sauvegarder le volume Docker '{resolved}' ?", True)
+                        docker_volumes.append(DockerVolume(name=resolved, selected=keep))
         except yaml.YAMLError:
             pass
 
